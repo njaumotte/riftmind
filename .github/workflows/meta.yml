@@ -1,0 +1,54 @@
+# Méta partagée de RiftMind : collecte des parties classées Master+ toutes les 6 heures
+# et publication dans la release « meta » (meta.json.gz), téléchargée par toutes les applis.
+name: Méta partagée
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Durée de collecte (minutes)"
+        default: "330"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meta
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RIOT_API_KEY: ${{ secrets.RIOT_API_KEY }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Code de collecte (fichier collect-meta.js de la dernière version publiée)
+        run: gh release download --repo "$GITHUB_REPOSITORY" -p collect-meta.js -O collect-meta.js --clobber
+
+      - name: Release « meta » (créée si besoin, jamais marquée comme dernière version)
+        run: |
+          gh release view meta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create meta --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+            --title "Méta partagée (automatique)" \
+            --notes "Fichier mis à jour automatiquement toutes les 6 heures. Ne pas supprimer : les applis RiftMind le téléchargent."
+
+      - name: Méta précédente
+        run: |
+          gh release download meta --repo "$GITHUB_REPOSITORY" -p meta.json.gz -O meta.json.gz --clobber 2>/dev/null && gunzip -f meta.json.gz || echo "Pas encore de méta"
+
+      - name: Collecte
+        run: node collect-meta.js --minutes "${{ github.event.inputs.minutes || '330' }}" --file meta.json --platforms euw1,kr,na1,eun1
+
+      - name: Publication
+        if: always()
+        run: |
+          test -s meta.json || exit 0
+          gzip -9 -f meta.json
+          gh release upload meta meta.json.gz --repo "$GITHUB_REPOSITORY" --clobber
